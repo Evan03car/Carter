@@ -39,7 +39,7 @@ export default function Index() {
       <View style={styles.content}>
         <View style={styles.logoContainer}>
           <Ionicons name="trending-up" size={80} color="#FFF" />
-          <Text style={styles.logo}>Profit Hunter</Text>
+          <Text style={styles.logo}>Carter</Text>
           <Text style={styles.tagline}>Find Underpriced Items to Resell</Text>
         </View>
 

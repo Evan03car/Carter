@@ -703,7 +703,7 @@ async def stripe_webhook(request: Request):
 @api_router.get("/")
 async def root():
     """API root"""
-    return {"message": "Profit Hunter API", "version": "1.0"}
+    return {"message": "Carter API", "version": "1.0"}
 
 @api_router.get("/dashboard")
 async def get_dashboard(user: User = Depends(get_current_user)):

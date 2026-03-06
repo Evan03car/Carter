@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "Profit Hunter",
-    "slug": "profit-hunter",
+    "name": "Carter",
+    "slug": "carter",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "profithunter",
+    "scheme": "carter",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.profithunter.app",
+      "bundleIdentifier": "com.carter.app",
       "infoPlist": {
         "NSCameraUsageDescription": "Take photos to estimate item value",
         "NSPhotoLibraryUsageDescription": "Choose photos to estimate resale prices",
@@ -22,7 +22,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#3B82F6"
       },
-      "package": "com.profithunter.app",
+      "package": "com.carter.app",
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
