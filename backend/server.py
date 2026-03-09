@@ -55,6 +55,7 @@ class User(BaseModel):
     trial_ends_at: Optional[datetime] = None
     subscription_ends_at: Optional[datetime] = None
     searches_today: int = 0
+    purchased_searches: int = 0  # Additional searches purchased
     last_search_date: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -336,12 +337,18 @@ async def search_marketplace(search_req: SearchRequest, user: User = Depends(get
             )
             user.searches_today = 0
         
-        # Free trial: 10 searches/day, Basic: 50/day, Premium: unlimited
-        limits = {"free_trial": 10, "basic": 50, "premium": 999999}
+        # Free trial: 10 searches/day, Basic: 10/day, Premium: 300/day
+        limits = {"free_trial": 10, "basic": 10, "premium": 300}
         limit = limits.get(user.subscription_tier, 10)
         
-        if user.searches_today >= limit:
-            raise HTTPException(status_code=429, detail="Daily search limit reached. Upgrade your plan!")
+        # Check if user has purchased searches
+        purchased_searches = user.dict().get("purchased_searches", 0)
+        
+        if user.searches_today >= limit and purchased_searches <= 0:
+            raise HTTPException(
+                status_code=429, 
+                detail=f"Daily search limit reached. Upgrade your plan or purchase additional searches!"
+            )
         
         # Search using SerpApi (eBay for now)
         params = {
@@ -397,9 +404,15 @@ async def search_marketplace(search_req: SearchRequest, user: User = Depends(get
                 continue
         
         # Update search count
+        update_data = {"$inc": {"searches_today": 1}}
+        
+        # Deduct from purchased searches if available
+        if user.dict().get("purchased_searches", 0) > 0:
+            update_data["$inc"]["purchased_searches"] = -1
+        
         await db.users.update_one(
             {"user_id": user.user_id},
-            {"$inc": {"searches_today": 1}}
+            update_data
         )
         
         # Sort by profit margin
@@ -585,19 +598,37 @@ async def delete_deal_alert(alert_id: str, user: User = Depends(get_current_user
 
 @api_router.post("/subscriptions/checkout")
 async def create_subscription_checkout(request: Request, user: User = Depends(get_current_user)):
-    """Create Stripe checkout for subscription"""
+    """Create Stripe checkout for subscription or search pack"""
     try:
         body = await request.json()
         
-        plan = body.get("plan", "basic")  # basic or premium
+        product_type = body.get("type", "subscription")  # subscription or search_pack
         origin_url = body.get("origin_url", "")
         
         if not origin_url:
             raise HTTPException(status_code=400, detail="Missing origin_url")
         
         # Fixed pricing
-        prices = {"basic": 15.0, "premium": 40.0}
-        amount = prices.get(plan, 15.0)
+        if product_type == "subscription":
+            plan = body.get("plan", "basic")  # basic or premium
+            prices = {"basic": 15.0, "premium": 40.0}
+            amount = prices.get(plan, 15.0)
+            metadata = {
+                "user_id": user.user_id,
+                "plan": plan,
+                "type": "subscription"
+            }
+        elif product_type == "search_pack":
+            pack = body.get("pack", "10")  # 10 or 25
+            prices = {"10": 5.0, "25": 7.0}
+            amount = prices.get(pack, 5.0)
+            metadata = {
+                "user_id": user.user_id,
+                "searches": pack,
+                "type": "search_pack"
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Invalid product type")
         
         host_url = origin_url
         webhook_url = f"{host_url}/api/webhook/stripe"
@@ -611,11 +642,7 @@ async def create_subscription_checkout(request: Request, user: User = Depends(ge
             currency="usd",
             success_url=success_url,
             cancel_url=cancel_url,
-            metadata={
-                "user_id": user.user_id,
-                "plan": plan,
-                "type": "subscription"
-            }
+            metadata=metadata
         )
         
         session = await stripe_checkout.create_checkout_session(checkout_request)
@@ -625,7 +652,8 @@ async def create_subscription_checkout(request: Request, user: User = Depends(ge
             "session_id": session.session_id,
             "user_id": user.user_id,
             "amount": amount,
-            "plan": plan,
+            "product_type": product_type,
+            "metadata": metadata,
             "payment_status": "pending",
             "created_at": datetime.now(timezone.utc)
         })
@@ -652,19 +680,29 @@ async def check_payment_status(session_id: str, user: User = Depends(get_current
             transaction = await db.payment_transactions.find_one({"session_id": session_id})
             
             if transaction and transaction.get("payment_status") != "completed":
-                plan = transaction.get("plan", "basic")
+                product_type = transaction.get("product_type", "subscription")
+                metadata = transaction.get("metadata", {})
                 
-                # Update user subscription
-                subscription_ends = datetime.now(timezone.utc) + timedelta(days=30)
-                await db.users.update_one(
-                    {"user_id": user.user_id},
-                    {
-                        "$set": {
-                            "subscription_tier": plan,
-                            "subscription_ends_at": subscription_ends
+                if product_type == "subscription":
+                    plan = metadata.get("plan", "basic")
+                    # Update user subscription
+                    subscription_ends = datetime.now(timezone.utc) + timedelta(days=30)
+                    await db.users.update_one(
+                        {"user_id": user.user_id},
+                        {
+                            "$set": {
+                                "subscription_tier": plan,
+                                "subscription_ends_at": subscription_ends
+                            }
                         }
-                    }
-                )
+                    )
+                elif product_type == "search_pack":
+                    searches = int(metadata.get("searches", "10"))
+                    # Add purchased searches
+                    await db.users.update_one(
+                        {"user_id": user.user_id},
+                        {"$inc": {"purchased_searches": searches}}
+                    )
                 
                 # Mark transaction as completed
                 await db.payment_transactions.update_one(
@@ -751,7 +789,8 @@ async def get_dashboard(user: User = Depends(get_current_user)):
                 "email": user.email,
                 "subscription_tier": user.subscription_tier,
                 "subscription_status": subscription_status,
-                "days_remaining": days_remaining
+                "days_remaining": days_remaining,
+                "purchased_searches": user.dict().get("purchased_searches", 0)
             },
             "stats": {
                 "saved_items": saved_count,
