@@ -803,6 +803,110 @@ async def get_dashboard(user: User = Depends(get_current_user)):
         logger.error(f"Dashboard error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ==================== FEEDBACK ====================
+
+class FeedbackCreate(BaseModel):
+    category: str
+    title: str
+    description: str
+
+class FeedbackResponse(BaseModel):
+    feedback_id: str
+    user_name: str
+    category: str
+    title: str
+    description: str
+    upvotes: int
+    status: str
+    created_at: datetime
+    user_upvoted: bool = False
+
+@api_router.post("/feedback")
+async def create_feedback(feedback: FeedbackCreate, user: User = Depends(get_current_user)):
+    """Create feedback"""
+    try:
+        feedback_id = f"feedback_{uuid.uuid4().hex[:12]}"
+        
+        feedback_data = {
+            "feedback_id": feedback_id,
+            "user_id": user.user_id,
+            "user_name": user.name,
+            "category": feedback.category,
+            "title": feedback.title,
+            "description": feedback.description,
+            "upvotes": 0,
+            "upvoted_by": [],
+            "status": "new",
+            "created_at": datetime.now(timezone.utc)
+        }
+        
+        await db.feedback.insert_one(feedback_data)
+        
+        return {"message": "Feedback submitted", "feedback_id": feedback_id}
+        
+    except Exception as e:
+        logger.error(f"Create feedback error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/feedback")
+async def get_feedbacks(user: User = Depends(get_current_user)):
+    """Get all feedback"""
+    try:
+        feedbacks = await db.feedback.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+        
+        # Add user_upvoted field
+        for feedback in feedbacks:
+            upvoted_by = feedback.get("upvoted_by", [])
+            feedback["user_upvoted"] = user.user_id in upvoted_by
+            # Remove upvoted_by from response
+            feedback.pop("upvoted_by", None)
+        
+        return {"feedbacks": feedbacks}
+        
+    except Exception as e:
+        logger.error(f"Get feedbacks error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/feedback/{feedback_id}/upvote")
+async def upvote_feedback(feedback_id: str, user: User = Depends(get_current_user)):
+    """Toggle upvote on feedback"""
+    try:
+        feedback = await db.feedback.find_one({"feedback_id": feedback_id})
+        
+        if not feedback:
+            raise HTTPException(status_code=404, detail="Feedback not found")
+        
+        upvoted_by = feedback.get("upvoted_by", [])
+        
+        if user.user_id in upvoted_by:
+            # Remove upvote
+            await db.feedback.update_one(
+                {"feedback_id": feedback_id},
+                {
+                    "$pull": {"upvoted_by": user.user_id},
+                    "$inc": {"upvotes": -1}
+                }
+            )
+            return {"message": "Upvote removed", "upvoted": False}
+        else:
+            # Add upvote
+            await db.feedback.update_one(
+                {"feedback_id": feedback_id},
+                {
+                    "$addToSet": {"upvoted_by": user.user_id},
+                    "$inc": {"upvotes": 1}
+                }
+            )
+            return {"message": "Upvoted", "upvoted": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Upvote feedback error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
