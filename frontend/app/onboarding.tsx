@@ -80,7 +80,7 @@ const slides: OnboardingSlide[] = [
     icon: 'rocket',
     gradient: ['#8B5CF6', '#EC4899'],
     features: [
-      '7-day free trial',
+      '5-day free trial',
       'No credit card required',
       'Cancel anytime',
     ],

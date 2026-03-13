@@ -180,9 +180,9 @@ async def create_session(request: Request):
         user = await db.users.find_one({"email": email}, {"_id": 0})
         
         if not user:
-            # Create new user with 7-day trial
+            # Create new user with 5-day trial
             user_id = f"user_{uuid.uuid4().hex[:12]}"
-            trial_ends = datetime.now(timezone.utc) + timedelta(days=7)
+            trial_ends = datetime.now(timezone.utc) + timedelta(days=5)
             user_data = {
                 "user_id": user_id,
                 "email": email,
@@ -199,7 +199,7 @@ async def create_session(request: Request):
             user_id = user["user_id"]
         
         # Store session
-        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=5)
         session_data = {
             "session_token": session_token,
             "user_id": user_id,
@@ -903,6 +903,176 @@ async def upvote_feedback(feedback_id: str, user: User = Depends(get_current_use
     except HTTPException:
         raise
     except Exception as e:
+
+
+# ==================== CHAT ====================
+
+class MessageCreate(BaseModel):
+    message: str
+
+@api_router.get("/chat/conversations")
+async def get_conversations(user: User = Depends(get_current_user)):
+    """Get user's conversations"""
+    try:
+        # Find all conversations where user is a participant
+        conversations = await db.conversations.find({
+            "participants": user.user_id
+        }, {"_id": 0}).to_list(100)
+        
+        # Format for response
+        formatted_conversations = []
+        for conv in conversations:
+            other_user_id = [uid for uid in conv["participants"] if uid != user.user_id][0] if len(conv["participants"]) > 1 else None
+            
+            if other_user_id:
+                other_user = await db.users.find_one({"user_id": other_user_id}, {"_id": 0})
+                if other_user:
+                    formatted_conversations.append({
+                        "conversation_id": conv["conversation_id"],
+                        "other_user": {
+                            "user_id": other_user["user_id"],
+                            "name": other_user["name"],
+                            "picture": other_user.get("picture")
+                        },
+                        "last_message": conv.get("last_message", ""),
+                        "last_message_time": conv.get("last_message_time", conv["created_at"]),
+                        "unread_count": conv.get("unread_count", {}).get(user.user_id, 0)
+                    })
+        
+        # Sort by last message time
+        formatted_conversations.sort(key=lambda x: x["last_message_time"], reverse=True)
+        
+        return {"conversations": formatted_conversations}
+        
+    except Exception as e:
+        logger.error(f"Get conversations error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/chat/conversations/{conversation_id}/messages")
+async def get_messages(conversation_id: str, user: User = Depends(get_current_user)):
+    """Get messages in a conversation"""
+    try:
+        # Verify user is part of conversation
+        conversation = await db.conversations.find_one({
+            "conversation_id": conversation_id,
+            "participants": user.user_id
+        })
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Get messages
+        messages = await db.messages.find({
+            "conversation_id": conversation_id
+        }, {"_id": 0}).sort("created_at", 1).to_list(1000)
+        
+        # Mark as read
+        await db.conversations.update_one(
+            {"conversation_id": conversation_id},
+            {"$set": {f"unread_count.{user.user_id}": 0}}
+        )
+        
+        return {"messages": messages}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get messages error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/chat/conversations/{conversation_id}/messages")
+async def send_message(
+    conversation_id: str,
+    message_data: MessageCreate,
+    user: User = Depends(get_current_user)
+):
+    """Send a message in a conversation"""
+    try:
+        # Verify user is part of conversation
+        conversation = await db.conversations.find_one({
+            "conversation_id": conversation_id,
+            "participants": user.user_id
+        })
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Create message
+        message_id = f"msg_{uuid.uuid4().hex[:12]}"
+        message = {
+            "message_id": message_id,
+            "conversation_id": conversation_id,
+            "sender_id": user.user_id,
+            "sender_name": user.name,
+            "message": message_data.message,
+            "created_at": datetime.now(timezone.utc)
+        }
+        
+        await db.messages.insert_one(message)
+        
+        # Update conversation
+        other_user_id = [uid for uid in conversation["participants"] if uid != user.user_id][0]
+        await db.conversations.update_one(
+            {"conversation_id": conversation_id},
+            {
+                "$set": {
+                    "last_message": message_data.message[:50],
+                    "last_message_time": datetime.now(timezone.utc)
+                },
+                "$inc": {f"unread_count.{other_user_id}": 1}
+            }
+        )
+        
+        return {"message": "Message sent", "message_id": message_id}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Send message error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/chat/start")
+async def start_conversation(request: Request, user: User = Depends(get_current_user)):
+    """Start a new conversation with another user"""
+    try:
+        body = await request.json()
+        other_user_id = body.get("user_id")
+        
+        if not other_user_id:
+            raise HTTPException(status_code=400, detail="Missing user_id")
+        
+        if other_user_id == user.user_id:
+            raise HTTPException(status_code=400, detail="Cannot chat with yourself")
+        
+        # Check if conversation already exists
+        existing = await db.conversations.find_one({
+            "participants": {"$all": [user.user_id, other_user_id]}
+        })
+        
+        if existing:
+            return {"conversation_id": existing["conversation_id"], "exists": True}
+        
+        # Create new conversation
+        conversation_id = f"conv_{uuid.uuid4().hex[:12]}"
+        conversation = {
+            "conversation_id": conversation_id,
+            "participants": [user.user_id, other_user_id],
+            "created_at": datetime.now(timezone.utc),
+            "last_message": "",
+            "last_message_time": datetime.now(timezone.utc),
+            "unread_count": {user.user_id: 0, other_user_id: 0}
+        }
+        
+        await db.conversations.insert_one(conversation)
+        
+        return {"conversation_id": conversation_id, "exists": False}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Start conversation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
         logger.error(f"Upvote feedback error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
