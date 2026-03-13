@@ -611,8 +611,8 @@ async def create_subscription_checkout(request: Request, user: User = Depends(ge
         # Fixed pricing
         if product_type == "subscription":
             plan = body.get("plan", "basic")  # basic or premium
-            prices = {"basic": 15.0, "premium": 40.0}
-            amount = prices.get(plan, 15.0)
+            prices = {"basic": 12.0, "premium": 40.0}
+            amount = prices.get(plan, 12.0)
             metadata = {
                 "user_id": user.user_id,
                 "plan": plan,

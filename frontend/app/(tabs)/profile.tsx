@@ -161,7 +161,7 @@ export default function ProfileScreen() {
               <View style={styles.upgradeContent}>
                 <Ionicons name="briefcase" size={32} color="#3B82F6" />
                 <View style={styles.upgradeText}>
-                  <Text style={styles.upgradeTitle}>Basic Plan - $15/month</Text>
+                  <Text style={styles.upgradeTitle}>Basic Plan - $12/month</Text>
                   <Text style={styles.upgradeSubtitle}>
                     10 searches per day • Deal alerts
                   </Text>
