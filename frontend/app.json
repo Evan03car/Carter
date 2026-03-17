@@ -8,13 +8,26 @@
     "scheme": "carter",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#3B82F6"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.carter.app",
+      "buildNumber": "1",
       "infoPlist": {
         "NSCameraUsageDescription": "Take photos to estimate item value",
         "NSPhotoLibraryUsageDescription": "Choose photos to estimate resale prices",
-        "NSLocationWhenInUseUsageDescription": "Find local deals near you"
+        "NSLocationWhenInUseUsageDescription": "Find local deals near you",
+        "UIBackgroundModes": ["remote-notification"]
+      },
+      "config": {
+        "usesNonExemptEncryption": false
       }
     },
     "android": {
@@ -23,12 +36,15 @@
         "backgroundColor": "#3B82F6"
       },
       "package": "com.carter.app",
+      "versionCode": 1,
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
       ],
       "edgeToEdgeEnabled": true
     },
@@ -58,7 +74,9 @@
         "expo-notifications",
         {
           "icon": "./assets/images/notification-icon.png",
-          "color": "#3B82F6"
+          "color": "#3B82F6",
+          "sounds": [],
+          "mode": "production"
         }
       ]
     ],
@@ -68,6 +86,18 @@
     "notification": {
       "icon": "./assets/images/notification-icon.png",
       "color": "#3B82F6"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_PROJECT_ID"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/YOUR_PROJECT_ID"
     }
   }
 }
+

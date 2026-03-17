@@ -802,6 +802,7 @@ async def get_dashboard(user: User = Depends(get_current_user)):
     except Exception as e:
         logger.error(f"Dashboard error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== FEEDBACK ====================
