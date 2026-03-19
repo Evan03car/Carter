@@ -904,7 +904,8 @@ async def upvote_feedback(feedback_id: str, user: User = Depends(get_current_use
     except HTTPException:
         raise
     except Exception as e:
-
+        logger.error(f"Upvote feedback error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== CHAT ====================
 
@@ -1090,5 +1091,25 @@ app.add_middleware(
 )
 
 @app.on_event("shutdown")
+
+
+# ==================== ANALYTICS ====================
+
+@api_router.post("/analytics/events")
+async def log_analytics_event(request: Request):
+    """Log analytics event"""
+    try:
+        event_data = await request.json()
+        
+        # Store in database
+        await db.analytics_events.insert_one(event_data)
+        
+        return {"message": "Event logged successfully"}
+        
+    except Exception as e:
+        logger.error(f"Analytics event error: {str(e)}")
+        # Don't fail the request if analytics logging fails
+        return {"message": "Event logged with errors"}
+
 async def shutdown_db_client():
     client.close()

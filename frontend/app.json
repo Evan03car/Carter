@@ -24,6 +24,7 @@
         "NSCameraUsageDescription": "Take photos to estimate item value",
         "NSPhotoLibraryUsageDescription": "Choose photos to estimate resale prices",
         "NSLocationWhenInUseUsageDescription": "Find local deals near you",
+        "NSUserTrackingUsageDescription": "Your data helps us provide personalized deal recommendations and improve app performance",
         "UIBackgroundModes": ["remote-notification"]
       },
       "config": {
