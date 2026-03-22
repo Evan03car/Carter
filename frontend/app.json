@@ -25,7 +25,9 @@
         "NSPhotoLibraryUsageDescription": "Choose photos to estimate resale prices",
         "NSLocationWhenInUseUsageDescription": "Find local deals near you",
         "NSUserTrackingUsageDescription": "Your data helps us provide personalized deal recommendations and improve app performance",
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       },
       "config": {
         "usesNonExemptEncryption": false
@@ -79,7 +81,8 @@
           "sounds": [],
           "mode": "production"
         }
-      ]
+      ],
+      "expo-tracking-transparency"
     ],
     "experiments": {
       "typedRoutes": true
@@ -101,4 +104,3 @@
     }
   }
 }
-

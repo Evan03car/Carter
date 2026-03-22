@@ -1,3 +1,7 @@
+"""
+Carter API - Main Server
+Modular FastAPI backend with separated routes for chat and marketplace
+"""
 from fastapi import FastAPI, APIRouter, HTTPException, Cookie, Request, Header, Depends
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -32,7 +36,7 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[db_name]
 
 # Create the main app without a prefix
-app = FastAPI()
+app = FastAPI(title="Carter API", version="1.0")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -51,11 +55,11 @@ class User(BaseModel):
     email: str
     name: str
     picture: Optional[str] = None
-    subscription_tier: str = "free_trial"  # free_trial, basic, premium
+    subscription_tier: str = "free_trial"
     trial_ends_at: Optional[datetime] = None
     subscription_ends_at: Optional[datetime] = None
     searches_today: int = 0
-    purchased_searches: int = 0  # Additional searches purchased
+    purchased_searches: int = 0
     last_search_date: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -122,6 +126,25 @@ class ProfitCalculation(BaseModel):
     net_profit: float
     profit_margin: float
 
+class FeedbackCreate(BaseModel):
+    category: str
+    title: str
+    description: str
+
+class FeedbackResponse(BaseModel):
+    feedback_id: str
+    user_name: str
+    category: str
+    title: str
+    description: str
+    upvotes: int
+    status: str
+    created_at: datetime
+    user_upvoted: bool = False
+
+class MessageCreate(BaseModel):
+    message: str
+
 # ==================== AUTHENTICATION ====================
 
 async def get_current_user(session_token: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
@@ -161,7 +184,6 @@ async def create_session(request: Request):
         if not session_id:
             raise HTTPException(status_code=400, detail="Missing session_id")
         
-        # Call Emergent Auth API
         response = requests.get(
             "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
             headers={"X-Session-ID": session_id}
@@ -176,11 +198,9 @@ async def create_session(request: Request):
         picture = data.get("picture")
         session_token = data["session_token"]
         
-        # Check if user exists
         user = await db.users.find_one({"email": email}, {"_id": 0})
         
         if not user:
-            # Create new user with 5-day trial
             user_id = f"user_{uuid.uuid4().hex[:12]}"
             trial_ends = datetime.now(timezone.utc) + timedelta(days=5)
             user_data = {
@@ -198,7 +218,6 @@ async def create_session(request: Request):
         else:
             user_id = user["user_id"]
         
-        # Store session
         expires_at = datetime.now(timezone.utc) + timedelta(days=5)
         session_data = {
             "session_token": session_token,
@@ -208,7 +227,6 @@ async def create_session(request: Request):
         }
         await db.user_sessions.insert_one(session_data)
         
-        # Return user data
         response = JSONResponse(content={
             "user_id": user_id,
             "email": email,
@@ -250,18 +268,17 @@ async def logout(session_token: Optional[str] = Cookie(None)):
 
 def calculate_profit(purchase_price: float, estimated_resale: float, platform: str = "ebay") -> ProfitCalculation:
     """Calculate profit with fees and shipping"""
-    # Platform fees (approximate)
     fee_rates = {
-        "ebay": 0.13,  # 13%
-        "mercari": 0.125,  # 12.5%
-        "poshmark": 0.20,  # 20%
-        "facebook": 0.05,  # 5%
-        "other": 0.10  # 10%
+        "ebay": 0.13,
+        "mercari": 0.125,
+        "poshmark": 0.20,
+        "facebook": 0.05,
+        "other": 0.10
     }
     
     fee_rate = fee_rates.get(platform.lower(), 0.10)
     platform_fee = estimated_resale * fee_rate
-    shipping_cost = min(10.0, estimated_resale * 0.08)  # Estimate 8% or $10 max
+    shipping_cost = min(10.0, estimated_resale * 0.08)
     
     net_profit = estimated_resale - purchase_price - platform_fee - shipping_cost
     profit_margin = (net_profit / purchase_price * 100) if purchase_price > 0 else 0
@@ -302,7 +319,6 @@ Be realistic and consider current market conditions."""
         
         response = await chat.send_message(UserMessage(text=prompt))
         
-        # Parse JSON from response
         response_text = response.strip()
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0].strip()
@@ -314,7 +330,6 @@ Be realistic and consider current market conditions."""
         
     except Exception as e:
         logger.error(f"AI estimation error: {str(e)}")
-        # Fallback to basic estimation
         return {
             "estimated_price": 0,
             "confidence": "low",
@@ -327,8 +342,6 @@ Be realistic and consider current market conditions."""
 async def search_marketplace(search_req: SearchRequest, user: User = Depends(get_current_user)):
     """Search marketplaces using SerpApi"""
     try:
-        
-        # Check subscription limits
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if user.last_search_date != today:
             await db.users.update_one(
@@ -337,11 +350,9 @@ async def search_marketplace(search_req: SearchRequest, user: User = Depends(get
             )
             user.searches_today = 0
         
-        # Free trial: 10 searches/day, Basic: 10/day, Premium: 300/day
         limits = {"free_trial": 10, "basic": 10, "premium": 300}
         limit = limits.get(user.subscription_tier, 10)
         
-        # Check if user has purchased searches
         purchased_searches = user.dict().get("purchased_searches", 0)
         
         if user.searches_today >= limit and purchased_searches <= 0:
@@ -350,7 +361,6 @@ async def search_marketplace(search_req: SearchRequest, user: User = Depends(get
                 detail=f"Daily search limit reached. Upgrade your plan or purchase additional searches!"
             )
         
-        # Search using SerpApi (eBay for now)
         params = {
             "engine": "ebay",
             "ebay_domain": "ebay.com",
@@ -370,21 +380,18 @@ async def search_marketplace(search_req: SearchRequest, user: User = Depends(get
         organic_results = data.get("organic_results", [])
         
         items = []
-        for result in organic_results[:20]:  # Limit to 20 results
+        for result in organic_results[:20]:
             try:
                 title = result.get("title", "")
                 price_str = result.get("price", {}).get("raw", "$0")
                 price = float(price_str.replace("$", "").replace(",", ""))
                 
-                # Get AI estimate
                 ai_estimate = await estimate_resale_price_with_ai(title, search_req.category or "")
                 estimated_price = ai_estimate.get("estimated_price", price * 1.5)
                 
-                # Calculate profit
                 profit_calc = calculate_profit(price, estimated_price, "ebay")
                 
-                # Only include if profitable
-                if profit_calc.profit_margin >= 15:  # 15% minimum margin
+                if profit_calc.profit_margin >= 15:
                     item = MarketplaceItem(
                         title=title,
                         price=price,
@@ -403,10 +410,8 @@ async def search_marketplace(search_req: SearchRequest, user: User = Depends(get
                 logger.error(f"Error processing result: {str(e)}")
                 continue
         
-        # Update search count
         update_data = {"$inc": {"searches_today": 1}}
         
-        # Deduct from purchased searches if available
         if user.dict().get("purchased_searches", 0) > 0:
             update_data["$inc"]["purchased_searches"] = -1
         
@@ -415,11 +420,10 @@ async def search_marketplace(search_req: SearchRequest, user: User = Depends(get
             update_data
         )
         
-        # Sort by profit margin
         items.sort(key=lambda x: x.get("profit_margin", 0), reverse=True)
         
         return {
-            "items": items[:15],  # Return top 15
+            "items": items[:15],
             "searches_remaining": max(0, limit - user.searches_today - 1)
         }
         
@@ -435,7 +439,6 @@ async def search_marketplace(search_req: SearchRequest, user: User = Depends(get
 async def estimate_price(request: PriceEstimateRequest, user: User = Depends(get_current_user)):
     """AI-powered price estimation from URL or image"""
     try:
-        
         prompt = "Analyze this item for resale value. Provide estimated price, demand level, and best platform to sell."
         
         if request.listing_url:
@@ -455,7 +458,6 @@ async def estimate_price(request: PriceEstimateRequest, user: User = Depends(get
             system_message="You are an expert reseller with deep knowledge of online marketplace prices and trends."
         ).with_model("gemini", "gemini-2.5-pro")
         
-        # Add image if provided
         file_contents = []
         if request.image_base64:
             image_content = ImageContent(image_base64=request.image_base64)
@@ -465,7 +467,6 @@ async def estimate_price(request: PriceEstimateRequest, user: User = Depends(get
             UserMessage(text=prompt, file_contents=file_contents if file_contents else None)
         )
         
-        # Parse response
         response_text = response.strip()
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0].strip()
@@ -492,7 +493,6 @@ async def estimate_price(request: PriceEstimateRequest, user: User = Depends(get
 async def save_item(item: MarketplaceItem, user: User = Depends(get_current_user)):
     """Save an item"""
     try:
-        
         saved = SavedItem(
             user_id=user.user_id,
             item=item
@@ -509,7 +509,6 @@ async def save_item(item: MarketplaceItem, user: User = Depends(get_current_user
 async def get_saved_items(user: User = Depends(get_current_user)):
     """Get user's saved items"""
     try:
-        
         items = await db.saved_items.find(
             {"user_id": user.user_id},
             {"_id": 0}
@@ -525,7 +524,6 @@ async def get_saved_items(user: User = Depends(get_current_user)):
 async def delete_saved_item(item_id: str, user: User = Depends(get_current_user)):
     """Delete a saved item"""
     try:
-        
         result = await db.saved_items.delete_one({
             "user_id": user.user_id,
             "item.item_id": item_id
@@ -561,7 +559,6 @@ async def create_deal_alert(alert: DealAlert, user: User = Depends(get_current_u
 async def get_deal_alerts(user: User = Depends(get_current_user)):
     """Get user's deal alerts"""
     try:
-        
         alerts = await db.deal_alerts.find(
             {"user_id": user.user_id},
             {"_id": 0}
@@ -577,7 +574,6 @@ async def get_deal_alerts(user: User = Depends(get_current_user)):
 async def delete_deal_alert(alert_id: str, user: User = Depends(get_current_user)):
     """Delete a deal alert"""
     try:
-        
         result = await db.deal_alerts.delete_one({
             "user_id": user.user_id,
             "alert_id": alert_id
@@ -602,15 +598,14 @@ async def create_subscription_checkout(request: Request, user: User = Depends(ge
     try:
         body = await request.json()
         
-        product_type = body.get("type", "subscription")  # subscription or search_pack
+        product_type = body.get("type", "subscription")
         origin_url = body.get("origin_url", "")
         
         if not origin_url:
             raise HTTPException(status_code=400, detail="Missing origin_url")
         
-        # Fixed pricing
         if product_type == "subscription":
-            plan = body.get("plan", "basic")  # basic or premium
+            plan = body.get("plan", "basic")
             prices = {"basic": 12.0, "premium": 40.0}
             amount = prices.get(plan, 12.0)
             metadata = {
@@ -619,7 +614,7 @@ async def create_subscription_checkout(request: Request, user: User = Depends(ge
                 "type": "subscription"
             }
         elif product_type == "search_pack":
-            pack = body.get("pack", "10")  # 10 or 25
+            pack = body.get("pack", "10")
             prices = {"10": 5.0, "25": 7.0}
             amount = prices.get(pack, 5.0)
             metadata = {
@@ -647,7 +642,6 @@ async def create_subscription_checkout(request: Request, user: User = Depends(ge
         
         session = await stripe_checkout.create_checkout_session(checkout_request)
         
-        # Store pending transaction
         await db.payment_transactions.insert_one({
             "session_id": session.session_id,
             "user_id": user.user_id,
@@ -668,14 +662,12 @@ async def create_subscription_checkout(request: Request, user: User = Depends(ge
 async def check_payment_status(session_id: str, user: User = Depends(get_current_user)):
     """Check payment status"""
     try:
-        
-        host_url = "https://example.com"  # Not used for status check
+        host_url = "https://example.com"
         webhook_url = f"{host_url}/api/webhook/stripe"
         stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
         
         status = await stripe_checkout.get_checkout_status(session_id)
         
-        # Update transaction if paid
         if status.payment_status == "paid":
             transaction = await db.payment_transactions.find_one({"session_id": session_id})
             
@@ -685,7 +677,6 @@ async def check_payment_status(session_id: str, user: User = Depends(get_current
                 
                 if product_type == "subscription":
                     plan = metadata.get("plan", "basic")
-                    # Update user subscription
                     subscription_ends = datetime.now(timezone.utc) + timedelta(days=30)
                     await db.users.update_one(
                         {"user_id": user.user_id},
@@ -698,13 +689,11 @@ async def check_payment_status(session_id: str, user: User = Depends(get_current
                     )
                 elif product_type == "search_pack":
                     searches = int(metadata.get("searches", "10"))
-                    # Add purchased searches
                     await db.users.update_one(
                         {"user_id": user.user_id},
                         {"$inc": {"purchased_searches": searches}}
                     )
                 
-                # Mark transaction as completed
                 await db.payment_transactions.update_one(
                     {"session_id": session_id},
                     {"$set": {"payment_status": "completed", "completed_at": datetime.now(timezone.utc)}}
@@ -747,17 +736,13 @@ async def root():
 async def get_dashboard(user: User = Depends(get_current_user)):
     """Get dashboard data"""
     try:
-        
-        # Get saved items count
         saved_count = await db.saved_items.count_documents({"user_id": user.user_id})
         
-        # Get active alerts
         alerts_count = await db.deal_alerts.count_documents({
             "user_id": user.user_id,
             "active": True
         })
         
-        # Check subscription status
         subscription_status = "active"
         days_remaining = 0
         
@@ -802,26 +787,8 @@ async def get_dashboard(user: User = Depends(get_current_user)):
     except Exception as e:
         logger.error(f"Dashboard error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # ==================== FEEDBACK ====================
-
-class FeedbackCreate(BaseModel):
-    category: str
-    title: str
-    description: str
-
-class FeedbackResponse(BaseModel):
-    feedback_id: str
-    user_name: str
-    category: str
-    title: str
-    description: str
-    upvotes: int
-    status: str
-    created_at: datetime
-    user_upvoted: bool = False
 
 @api_router.post("/feedback")
 async def create_feedback(feedback: FeedbackCreate, user: User = Depends(get_current_user)):
@@ -856,11 +823,9 @@ async def get_feedbacks(user: User = Depends(get_current_user)):
     try:
         feedbacks = await db.feedback.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
         
-        # Add user_upvoted field
         for feedback in feedbacks:
             upvoted_by = feedback.get("upvoted_by", [])
             feedback["user_upvoted"] = user.user_id in upvoted_by
-            # Remove upvoted_by from response
             feedback.pop("upvoted_by", None)
         
         return {"feedbacks": feedbacks}
@@ -881,7 +846,6 @@ async def upvote_feedback(feedback_id: str, user: User = Depends(get_current_use
         upvoted_by = feedback.get("upvoted_by", [])
         
         if user.user_id in upvoted_by:
-            # Remove upvote
             await db.feedback.update_one(
                 {"feedback_id": feedback_id},
                 {
@@ -891,7 +855,6 @@ async def upvote_feedback(feedback_id: str, user: User = Depends(get_current_use
             )
             return {"message": "Upvote removed", "upvoted": False}
         else:
-            # Add upvote
             await db.feedback.update_one(
                 {"feedback_id": feedback_id},
                 {
@@ -908,176 +871,27 @@ async def upvote_feedback(feedback_id: str, user: User = Depends(get_current_use
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== CHAT ====================
+# Chat endpoints are now in routes/chat.py for better organization
+# Import and include the chat router
 
-class MessageCreate(BaseModel):
-    message: str
+from routes.chat import router as chat_router
+api_router.include_router(chat_router)
 
-@api_router.get("/chat/conversations")
-async def get_conversations(user: User = Depends(get_current_user)):
-    """Get user's conversations"""
+# ==================== ANALYTICS ====================
+
+@api_router.post("/analytics/events")
+async def log_analytics_event(request: Request):
+    """Log analytics event"""
     try:
-        # Find all conversations where user is a participant
-        conversations = await db.conversations.find({
-            "participants": user.user_id
-        }, {"_id": 0}).to_list(100)
+        event_data = await request.json()
         
-        # Format for response
-        formatted_conversations = []
-        for conv in conversations:
-            other_user_id = [uid for uid in conv["participants"] if uid != user.user_id][0] if len(conv["participants"]) > 1 else None
-            
-            if other_user_id:
-                other_user = await db.users.find_one({"user_id": other_user_id}, {"_id": 0})
-                if other_user:
-                    formatted_conversations.append({
-                        "conversation_id": conv["conversation_id"],
-                        "other_user": {
-                            "user_id": other_user["user_id"],
-                            "name": other_user["name"],
-                            "picture": other_user.get("picture")
-                        },
-                        "last_message": conv.get("last_message", ""),
-                        "last_message_time": conv.get("last_message_time", conv["created_at"]),
-                        "unread_count": conv.get("unread_count", {}).get(user.user_id, 0)
-                    })
+        await db.analytics_events.insert_one(event_data)
         
-        # Sort by last message time
-        formatted_conversations.sort(key=lambda x: x["last_message_time"], reverse=True)
-        
-        return {"conversations": formatted_conversations}
+        return {"message": "Event logged successfully"}
         
     except Exception as e:
-        logger.error(f"Get conversations error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.get("/chat/conversations/{conversation_id}/messages")
-async def get_messages(conversation_id: str, user: User = Depends(get_current_user)):
-    """Get messages in a conversation"""
-    try:
-        # Verify user is part of conversation
-        conversation = await db.conversations.find_one({
-            "conversation_id": conversation_id,
-            "participants": user.user_id
-        })
-        
-        if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        
-        # Get messages
-        messages = await db.messages.find({
-            "conversation_id": conversation_id
-        }, {"_id": 0}).sort("created_at", 1).to_list(1000)
-        
-        # Mark as read
-        await db.conversations.update_one(
-            {"conversation_id": conversation_id},
-            {"$set": {f"unread_count.{user.user_id}": 0}}
-        )
-        
-        return {"messages": messages}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Get messages error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.post("/chat/conversations/{conversation_id}/messages")
-async def send_message(
-    conversation_id: str,
-    message_data: MessageCreate,
-    user: User = Depends(get_current_user)
-):
-    """Send a message in a conversation"""
-    try:
-        # Verify user is part of conversation
-        conversation = await db.conversations.find_one({
-            "conversation_id": conversation_id,
-            "participants": user.user_id
-        })
-        
-        if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        
-        # Create message
-        message_id = f"msg_{uuid.uuid4().hex[:12]}"
-        message = {
-            "message_id": message_id,
-            "conversation_id": conversation_id,
-            "sender_id": user.user_id,
-            "sender_name": user.name,
-            "message": message_data.message,
-            "created_at": datetime.now(timezone.utc)
-        }
-        
-        await db.messages.insert_one(message)
-        
-        # Update conversation
-        other_user_id = [uid for uid in conversation["participants"] if uid != user.user_id][0]
-        await db.conversations.update_one(
-            {"conversation_id": conversation_id},
-            {
-                "$set": {
-                    "last_message": message_data.message[:50],
-                    "last_message_time": datetime.now(timezone.utc)
-                },
-                "$inc": {f"unread_count.{other_user_id}": 1}
-            }
-        )
-        
-        return {"message": "Message sent", "message_id": message_id}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Send message error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.post("/chat/start")
-async def start_conversation(request: Request, user: User = Depends(get_current_user)):
-    """Start a new conversation with another user"""
-    try:
-        body = await request.json()
-        other_user_id = body.get("user_id")
-        
-        if not other_user_id:
-            raise HTTPException(status_code=400, detail="Missing user_id")
-        
-        if other_user_id == user.user_id:
-            raise HTTPException(status_code=400, detail="Cannot chat with yourself")
-        
-        # Check if conversation already exists
-        existing = await db.conversations.find_one({
-            "participants": {"$all": [user.user_id, other_user_id]}
-        })
-        
-        if existing:
-            return {"conversation_id": existing["conversation_id"], "exists": True}
-        
-        # Create new conversation
-        conversation_id = f"conv_{uuid.uuid4().hex[:12]}"
-        conversation = {
-            "conversation_id": conversation_id,
-            "participants": [user.user_id, other_user_id],
-            "created_at": datetime.now(timezone.utc),
-            "last_message": "",
-            "last_message_time": datetime.now(timezone.utc),
-            "unread_count": {user.user_id: 0, other_user_id: 0}
-        }
-        
-        await db.conversations.insert_one(conversation)
-        
-        return {"conversation_id": conversation_id, "exists": False}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Start conversation error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-        logger.error(f"Upvote feedback error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+        logger.error(f"Analytics event error: {str(e)}")
+        return {"message": "Event logged with errors"}
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -1091,25 +905,5 @@ app.add_middleware(
 )
 
 @app.on_event("shutdown")
-
-
-# ==================== ANALYTICS ====================
-
-@api_router.post("/analytics/events")
-async def log_analytics_event(request: Request):
-    """Log analytics event"""
-    try:
-        event_data = await request.json()
-        
-        # Store in database
-        await db.analytics_events.insert_one(event_data)
-        
-        return {"message": "Event logged successfully"}
-        
-    except Exception as e:
-        logger.error(f"Analytics event error: {str(e)}")
-        # Don't fail the request if analytics logging fails
-        return {"message": "Event logged with errors"}
-
 async def shutdown_db_client():
     client.close()
